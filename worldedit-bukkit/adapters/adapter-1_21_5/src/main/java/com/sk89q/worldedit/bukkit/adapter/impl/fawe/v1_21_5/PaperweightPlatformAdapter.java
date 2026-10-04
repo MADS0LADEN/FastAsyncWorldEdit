@@ -10,6 +10,7 @@ import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.FaweCache;
 import com.fastasyncworldedit.core.math.BitArrayUnstretched;
 import com.fastasyncworldedit.core.math.IntPair;
+import com.fastasyncworldedit.core.util.FoliaUtil;
 import com.fastasyncworldedit.core.util.MathMan;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.sk89q.worldedit.bukkit.WorldEditPlugin;
@@ -52,6 +53,7 @@ import net.minecraft.world.level.chunk.SingleValuePalette;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.entity.PersistentEntitySectionManager;
 import org.apache.logging.log4j.Logger;
+import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.craftbukkit.CraftChunk;
 
@@ -301,6 +303,13 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
     }
 
     private static void addTicket(ServerLevel serverLevel, int chunkX, int chunkZ) {
+        if (FoliaUtil.isFoliaServer()) {
+            try {
+                serverLevel.getChunkSource().addTicketWithRadius(ChunkHolderManager.UNLOAD_COOLDOWN, new ChunkPos(chunkX, chunkZ), 0);
+            } catch (Exception ignored) {
+            }
+            return;
+        }
         // Ensure chunk is definitely loaded before applying a ticket
         io.papermc.paper.util.MCUtil.MAIN_EXECUTOR.execute(() -> serverLevel
                 .getChunkSource()
@@ -337,6 +346,50 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
         if (lockHolder.chunkLock == null) {
             return;
         }
+        if (FoliaUtil.isFoliaServer()) {
+            Bukkit.getServer().getRegionScheduler().execute(
+                    WorldEditPlugin.getInstance(),
+                    nmsWorld.getWorld(),
+                    chunkX,
+                    chunkZ,
+                    () -> {
+                        try {
+                            LevelChunk regionChunk = nmsWorld.getChunkSource().getChunkAtIfLoadedImmediately(chunkX, chunkZ);
+                            if (regionChunk == null) {
+                                return;
+                            }
+                            ChunkPos pos = regionChunk.getPos();
+                            ClientboundLevelChunkWithLightPacket packet;
+                            if (PaperSupport.isPaper()) {
+                                packet = new ClientboundLevelChunkWithLightPacket(
+                                        regionChunk,
+                                        nmsWorld.getLightEngine(),
+                                        null,
+                                        null,
+                                        false  // last false is to not bother with x-ray
+                                );
+                            } else {
+                                packet = new ClientboundLevelChunkWithLightPacket(
+                                        regionChunk,
+                                        nmsWorld.getLightEngine(),
+                                        null,
+                                        null
+                                );
+                            }
+                            nearbyPlayers(nmsWorld, pos).forEach(p -> p.connection.send(packet));
+                        } catch (IllegalStateException e) {
+                            LOGGER.warn(
+                                    "Skipped sending chunk packet for chunk [{}, {}] due to concurrent section modification",
+                                    chunkX,
+                                    chunkZ,
+                                    e
+                            );
+                        } finally {
+                            NMSAdapter.endChunkPacketSend(nmsWorld.getWorld().getName(), pair, lockHolder);
+                        }
+                    }
+            );
+        } else {
         MinecraftServer.getServer().execute(() -> {
             try {
                 ChunkPos pos = levelChunk.getPos();
@@ -363,6 +416,7 @@ public final class PaperweightPlatformAdapter extends NMSAdapter {
                 NMSAdapter.endChunkPacketSend(nmsWorld.getWorld().getName(), pair, lockHolder);
             }
         });
+        }
     }
 
     private static List<ServerPlayer> nearbyPlayers(ServerLevel serverLevel, ChunkPos coordIntPair) {

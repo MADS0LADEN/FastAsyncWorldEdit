@@ -4,6 +4,7 @@ import com.fastasyncworldedit.core.nbt.FaweCompoundTag;
 import com.fastasyncworldedit.core.queue.IChunkGet;
 import com.fastasyncworldedit.core.queue.implementation.packet.ChunkPacket;
 import com.fastasyncworldedit.core.util.ExtentTraverser;
+import com.fastasyncworldedit.core.util.FoliaUtil;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.fastasyncworldedit.core.util.task.RunnableVal;
 import com.sk89q.jnbt.CompoundTag;
@@ -269,6 +270,9 @@ public class WorldWrapper extends AbstractWorld {
 
     @Override
     public Collection<BaseItemStack> getBlockDrops(final BlockVector3 position) {
+        if (FoliaUtil.isFoliaServer()) {
+            return parent.getBlockDrops(position);
+        }
         return TaskManager.taskManager().sync(() -> parent.getBlockDrops(position));
     }
 

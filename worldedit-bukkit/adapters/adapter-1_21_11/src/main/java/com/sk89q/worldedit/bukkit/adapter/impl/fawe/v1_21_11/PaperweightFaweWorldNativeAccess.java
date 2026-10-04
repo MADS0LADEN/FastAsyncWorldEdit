@@ -3,6 +3,12 @@ package com.sk89q.worldedit.bukkit.adapter.impl.fawe.v1_21_11;
 import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.math.IntPair;
 import com.fastasyncworldedit.core.util.TaskManager;
+import java.util.ArrayList;
+import org.bukkit.World;
+import java.util.Map;
+import java.util.HashMap;
+import com.fastasyncworldedit.core.util.FoliaUtil;
+import com.fastasyncworldedit.bukkit.util.FoliaRegions;
 import com.fastasyncworldedit.core.util.task.RunnableVal;
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
 import com.sk89q.worldedit.internal.block.BlockStateIdAccess;
@@ -237,7 +243,41 @@ public class PaperweightFaweWorldNativeAccess implements WorldNativeAccess<Level
         getLevel().updatePOIOnBlockStateChange(blockPos, oldState, newState);
     }
 
+
+    private void applyCachedChangesOnRegions(boolean sendChunks) {
+        final Map<IntPair, java.util.List<CachedChange>> byChunk = new HashMap<>();
+        for (CachedChange change : cachedChanges) {
+            IntPair chunk = new IntPair(change.levelChunk.locX, change.levelChunk.locZ);
+            byChunk.computeIfAbsent(chunk, key -> new ArrayList<>()).add(change);
+        }
+        final Set<IntPair> chunksToSend = sendChunks ? Set.copyOf(cachedChunksToSend) : Collections.emptySet();
+        World bukkitWorld = getLevel().getWorld();
+        for (Map.Entry<IntPair, java.util.List<CachedChange>> entry : byChunk.entrySet()) {
+            IntPair chunk = entry.getKey();
+            java.util.List<CachedChange> chunkChanges = entry.getValue();
+            boolean sendThisChunk = sendChunks && chunksToSend.contains(chunk);
+            FoliaRegions.runOnChunkAndWait(bukkitWorld, chunk.x(), chunk.z(), () -> {
+                for (CachedChange cc : chunkChanges) {
+                    cc.levelChunk.setBlockState(
+                            cc.blockPos,
+                            cc.blockState,
+                            sideEffectSet.shouldApply(SideEffect.UPDATE) ? 0 : 512
+                    );
+                }
+                if (sendThisChunk) {
+                    PaperweightPlatformAdapter.sendChunk(chunk, getLevel().getWorld().getHandle(), chunk.x(), chunk.z());
+                }
+            });
+        }
+    }
+
     private synchronized void flushAsync(final boolean sendChunks) {
+        if (FoliaUtil.isFoliaServer()) {
+            applyCachedChangesOnRegions(sendChunks);
+            cachedChanges.clear();
+            cachedChunksToSend.clear();
+            return;
+        }
         final Set<CachedChange> changes = Set.copyOf(cachedChanges);
         cachedChanges.clear();
         final Set<IntPair> toSend;
@@ -266,6 +306,12 @@ public class PaperweightFaweWorldNativeAccess implements WorldNativeAccess<Level
 
     @Override
     public synchronized void flush() {
+        if (FoliaUtil.isFoliaServer()) {
+            applyCachedChangesOnRegions(true);
+            cachedChanges.clear();
+            cachedChunksToSend.clear();
+            return;
+        }
         RunnableVal<Object> runnableVal = new RunnableVal<>() {
             @Override
             public void run(Object value) {

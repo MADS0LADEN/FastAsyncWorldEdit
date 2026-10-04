@@ -19,6 +19,7 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.bukkit.util.PaperSupport;
 import com.fastasyncworldedit.core.configuration.Caption;
 import com.fastasyncworldedit.core.configuration.Settings;
 import com.fastasyncworldedit.core.util.TaskManager;
@@ -243,6 +244,17 @@ public class BukkitPlayer extends AbstractPlayerActor {
         }
         org.bukkit.World finalWorld = world;
         //FAWE end
+        if (PaperSupport.isPaper()) {
+            player.teleportAsync(new Location(
+                    finalWorld,
+                    pos.x(),
+                    pos.y(),
+                    pos.z(),
+                    yaw,
+                    pitch
+            ));
+            return true;
+        }
         return TaskManager.taskManager().sync(() -> player.teleport(new Location(
                 finalWorld,
                 pos.x(),
@@ -364,6 +376,10 @@ public class BukkitPlayer extends AbstractPlayerActor {
 
     @Override
     public boolean setLocation(com.sk89q.worldedit.util.Location location) {
+        if (PaperSupport.isPaper()) {
+            player.teleportAsync(BukkitAdapter.adapt(location));
+            return true;
+        }
         return player.teleport(BukkitAdapter.adapt(location));
     }
 
