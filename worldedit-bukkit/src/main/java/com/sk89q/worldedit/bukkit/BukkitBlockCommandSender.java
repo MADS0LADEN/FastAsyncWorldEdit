@@ -19,6 +19,7 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.core.util.FoliaUtil;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.sk89q.worldedit.WorldEdit;
 import com.sk89q.worldedit.extension.platform.AbstractCommandBlockActor;
@@ -195,6 +196,9 @@ public class BukkitBlockCommandSender extends AbstractCommandBlockActor {
                     // we can update eagerly
                     updateActive();
                 } else {
+                    if (FoliaUtil.isFoliaServer()) {
+                        return active;
+                    }
                     // we should update it eventually
                     Bukkit.getScheduler().callSyncMethod(
                             plugin,

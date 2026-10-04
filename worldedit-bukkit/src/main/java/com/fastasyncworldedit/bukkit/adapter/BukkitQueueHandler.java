@@ -3,6 +3,7 @@ package com.fastasyncworldedit.bukkit.adapter;
 import co.aikar.timings.Timings;
 import com.fastasyncworldedit.bukkit.listener.ChunkListener;
 import com.fastasyncworldedit.core.queue.implementation.QueueHandler;
+import com.fastasyncworldedit.core.util.FoliaUtil;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -31,7 +32,8 @@ public class BukkitQueueHandler extends QueueHandler {
     @Override
     public void startUnsafe(boolean parallel) {
         ChunkListener.physicsFreeze = true;
-        if (parallel) {
+        // Canvas and Folia do not allow disabling the async catcher. Region scheduling owns that work.
+        if (parallel && !FoliaUtil.isFoliaServer()) {
             try {
                 asyncCatcher.setBoolean(asyncCatcher, false);
                 timingsEnabled = Timings.isTimingsEnabled();
@@ -51,7 +53,7 @@ public class BukkitQueueHandler extends QueueHandler {
     @Override
     public void endUnsafe(boolean parallel) {
         ChunkListener.physicsFreeze = false;
-        if (parallel) {
+        if (parallel && !FoliaUtil.isFoliaServer()) {
             try {
                 asyncCatcher.setBoolean(asyncCatcher, true);
                 if (timingsEnabled) {

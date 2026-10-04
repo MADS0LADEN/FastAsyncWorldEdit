@@ -23,6 +23,7 @@ import com.fastasyncworldedit.bukkit.BukkitPermissionAttachmentManager;
 import com.fastasyncworldedit.bukkit.FaweBukkit;
 import com.fastasyncworldedit.bukkit.util.PaperSupport;
 import com.fastasyncworldedit.core.Fawe;
+import com.fastasyncworldedit.core.util.FoliaUtil;
 import com.fastasyncworldedit.core.util.UpdateNotification;
 import com.fastasyncworldedit.core.util.WEManager;
 import com.google.common.base.Joiner;
@@ -452,7 +453,19 @@ public class WorldEditPlugin extends JavaPlugin {
         if (config != null) {
             config.unload();
         }
-        this.getServer().getScheduler().cancelTasks(this);
+        if (FoliaUtil.isFoliaServer()) {
+            this.getServer().getGlobalRegionScheduler().cancelTasks(this);
+            this.getServer().getAsyncScheduler().cancelTasks(this);
+            // cancelTasks(Plugin) was added to RegionScheduler after the 1.21.1 API this project compiles against.
+            try {
+                this.getServer().getRegionScheduler().getClass()
+                        .getMethod("cancelTasks", org.bukkit.plugin.Plugin.class)
+                        .invoke(this.getServer().getRegionScheduler(), this);
+            } catch (ReflectiveOperationException ignored) {
+            }
+        } else {
+            this.getServer().getScheduler().cancelTasks(this);
+        }
     }
 
     /**

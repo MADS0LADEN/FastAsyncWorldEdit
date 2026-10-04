@@ -1,10 +1,13 @@
 package com.fastasyncworldedit.bukkit.util;
 
+import com.fastasyncworldedit.core.util.FoliaUtil;
 import com.fastasyncworldedit.core.util.TaskManager;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.Plugin;
 
 import javax.annotation.Nonnull;
+import java.util.concurrent.TimeUnit;
 
 public class BukkitTaskManager extends TaskManager {
 
@@ -16,39 +19,94 @@ public class BukkitTaskManager extends TaskManager {
 
     @Override
     public int repeat(@Nonnull final Runnable runnable, final int interval) {
+        if (FoliaUtil.isFoliaServer()) {
+            long period = Math.max(1, interval);
+            ScheduledTask task = this.plugin.getServer().getGlobalRegionScheduler().runAtFixedRate(
+                    this.plugin,
+                    scheduledTask -> runnable.run(),
+                    period,
+                    period
+            );
+            return FoliaTasks.track(task);
+        }
         return this.plugin.getServer().getScheduler().scheduleSyncRepeatingTask(this.plugin, runnable, interval, interval);
     }
 
     @Override
     public int repeatAsync(@Nonnull final Runnable runnable, final int interval) {
+        if (FoliaUtil.isFoliaServer()) {
+            long periodMillis = Math.max(1, interval) * 50L;
+            ScheduledTask task = this.plugin.getServer().getAsyncScheduler().runAtFixedRate(
+                    this.plugin,
+                    scheduledTask -> runnable.run(),
+                    periodMillis,
+                    periodMillis,
+                    TimeUnit.MILLISECONDS
+            );
+            return FoliaTasks.track(task);
+        }
         return this.plugin.getServer().getScheduler().scheduleAsyncRepeatingTask(this.plugin, runnable, interval, interval);
     }
 
     @Override
     public void async(@Nonnull final Runnable runnable) {
+        if (FoliaUtil.isFoliaServer()) {
+            this.plugin.getServer().getAsyncScheduler().runNow(this.plugin, scheduledTask -> runnable.run());
+            return;
+        }
         this.plugin.getServer().getScheduler().runTaskAsynchronously(this.plugin, runnable).getTaskId();
     }
 
     @Override
     public void task(@Nonnull final Runnable runnable) {
+        if (FoliaUtil.isFoliaServer()) {
+            this.plugin.getServer().getGlobalRegionScheduler().run(this.plugin, scheduledTask -> runnable.run());
+            return;
+        }
         this.plugin.getServer().getScheduler().runTask(this.plugin, runnable).getTaskId();
     }
 
     @Override
     public void later(@Nonnull final Runnable runnable, final int delay) {
+        if (FoliaUtil.isFoliaServer()) {
+            if (delay <= 0) {
+                this.plugin.getServer().getGlobalRegionScheduler().run(this.plugin, scheduledTask -> runnable.run());
+            } else {
+                this.plugin.getServer().getGlobalRegionScheduler().runDelayed(this.plugin, scheduledTask -> runnable.run(), delay);
+            }
+            return;
+        }
         this.plugin.getServer().getScheduler().runTaskLater(this.plugin, runnable, delay).getTaskId();
     }
 
     @Override
     public void laterAsync(@Nonnull final Runnable runnable, final int delay) {
+        if (FoliaUtil.isFoliaServer()) {
+            if (delay <= 0) {
+                this.plugin.getServer().getAsyncScheduler().runNow(this.plugin, scheduledTask -> runnable.run());
+            } else {
+                this.plugin.getServer().getAsyncScheduler().runDelayed(
+                        this.plugin,
+                        scheduledTask -> runnable.run(),
+                        delay * 50L,
+                        TimeUnit.MILLISECONDS
+                );
+            }
+            return;
+        }
         this.plugin.getServer().getScheduler().runTaskLaterAsynchronously(this.plugin, runnable, delay);
     }
 
     @Override
     public void cancel(final int task) {
-        if (task != -1) {
-            Bukkit.getScheduler().cancelTask(task);
+        if (task == -1) {
+            return;
         }
+        if (FoliaUtil.isFoliaServer()) {
+            FoliaTasks.cancel(task);
+            return;
+        }
+        Bukkit.getScheduler().cancelTask(task);
     }
 
 }

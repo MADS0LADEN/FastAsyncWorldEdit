@@ -2,6 +2,8 @@ package com.sk89q.worldedit.bukkit.adapter.impl.fawe.v1_21_R1;
 
 import com.fastasyncworldedit.core.Fawe;
 import com.fastasyncworldedit.core.math.IntPair;
+import com.fastasyncworldedit.bukkit.util.FoliaRegions;
+import com.fastasyncworldedit.core.util.FoliaUtil;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.fastasyncworldedit.core.util.task.RunnableVal;
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
@@ -28,8 +30,12 @@ import org.enginehub.linbus.tree.LinCompoundTag;
 
 import javax.annotation.Nullable;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -231,6 +237,54 @@ public class PaperweightFaweWorldNativeAccess implements WorldNativeAccess<Level
             net.minecraft.world.level.block.state.BlockState newState
     ) {
         getLevel().onBlockStateChange(blockPos, oldState, newState);
+    }
+
+
+    private void applyCachedChangesOnRegionThread(Set<CachedChange> changes, Set<IntPair> chunksToSend, boolean sendChunks) {
+        if (!FoliaUtil.isFoliaServer()) {
+            changes.forEach(cc -> cc.levelChunk.setBlockState(
+                    cc.blockPos, cc.blockState,
+                    sideEffectSet != null && sideEffectSet.shouldApply(SideEffect.UPDATE)
+            ));
+            if (sendChunks) {
+                for (IntPair chunk : chunksToSend) {
+                    PaperweightPlatformAdapter.sendChunk(chunk, getLevel().getWorld().getHandle(), chunk.x(), chunk.z());
+                }
+            }
+            return;
+        }
+
+        org.bukkit.World bukkitWorld = getLevel().getWorld();
+        Map<IntPair, List<CachedChange>> byChunk = new HashMap<>();
+        for (CachedChange change : changes) {
+            IntPair chunkKey = new IntPair(change.levelChunk.locX, change.levelChunk.locZ);
+            byChunk.computeIfAbsent(chunkKey, ignored -> new ArrayList<>()).add(change);
+        }
+
+        for (Map.Entry<IntPair, List<CachedChange>> entry : byChunk.entrySet()) {
+            IntPair chunkKey = entry.getKey();
+            List<CachedChange> chunkChanges = entry.getValue();
+            FoliaRegions.runOnChunkAndWait(bukkitWorld, chunkKey.x(), chunkKey.z(), () -> {
+                chunkChanges.forEach(cc -> cc.levelChunk.setBlockState(
+                        cc.blockPos, cc.blockState,
+                        sideEffectSet != null && sideEffectSet.shouldApply(SideEffect.UPDATE)
+                ));
+                if (sendChunks && chunksToSend.contains(chunkKey)) {
+                    PaperweightPlatformAdapter.sendChunk(chunkKey, getLevel().getWorld().getHandle(), chunkKey.x(), chunkKey.z());
+                }
+            });
+        }
+
+        if (sendChunks) {
+            for (IntPair chunkKey : chunksToSend) {
+                if (byChunk.containsKey(chunkKey)) {
+                    continue;
+                }
+                FoliaRegions.runOnChunkAndWait(bukkitWorld, chunkKey.x(), chunkKey.z(), () ->
+                        PaperweightPlatformAdapter.sendChunk(chunkKey, getLevel().getWorld().getHandle(), chunkKey.x(), chunkKey.z())
+                );
+            }
+        }
     }
 
     private synchronized void flushAsync(final boolean sendChunks) {

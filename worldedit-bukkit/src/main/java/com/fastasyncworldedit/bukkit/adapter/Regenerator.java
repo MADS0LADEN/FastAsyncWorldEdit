@@ -4,10 +4,12 @@ import com.fastasyncworldedit.core.queue.IChunk;
 import com.fastasyncworldedit.core.queue.IChunkCache;
 import com.fastasyncworldedit.core.queue.IChunkGet;
 import com.fastasyncworldedit.core.queue.implementation.SingleThreadQueueExtent;
+import com.fastasyncworldedit.core.util.FoliaUtil;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.sk89q.worldedit.WorldEditException;
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
 import com.sk89q.worldedit.bukkit.BukkitWorld;
+import com.sk89q.worldedit.bukkit.WorldEditPlugin;
 import com.sk89q.worldedit.extent.Extent;
 import com.sk89q.worldedit.function.pattern.Pattern;
 import com.sk89q.worldedit.math.BlockVector3;
@@ -15,6 +17,10 @@ import com.sk89q.worldedit.regions.Region;
 import com.sk89q.worldedit.world.RegenOptions;
 import com.sk89q.worldedit.world.biome.BiomeType;
 import com.sk89q.worldedit.world.block.BaseBlock;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.generator.BiomeProvider;
 import org.bukkit.generator.WorldInfo;
 import org.jetbrains.annotations.NotNull;
@@ -104,10 +110,29 @@ public abstract class Regenerator {
     private void copyToWorld() {
         createSource();
         final long timeoutPerTick = TimeUnit.MILLISECONDS.toNanos(10);
-        int taskId = TaskManager.taskManager().repeat(() -> {
-            final long startTime = System.nanoTime();
-            runTasks(() -> System.nanoTime() - startTime < timeoutPerTick);
-        }, 1);
+        ScheduledTask foliaTask = null;
+        int taskId = -1;
+        if (FoliaUtil.isFoliaServer()) {
+            World freshWorld = getFreshWorld();
+            World world = freshWorld != null ? freshWorld : originalBukkitWorld;
+            BlockVector3 min = region.getMinimumPoint();
+            Location location = new Location(world, min.x(), min.y(), min.z());
+            foliaTask = Bukkit.getServer().getRegionScheduler().runAtFixedRate(
+                    WorldEditPlugin.getInstance(),
+                    location,
+                    scheduledTask -> {
+                        final long startTime = System.nanoTime();
+                        runTasks(() -> System.nanoTime() - startTime < timeoutPerTick);
+                    },
+                    1,
+                    1
+            );
+        } else {
+            taskId = TaskManager.taskManager().repeat(() -> {
+                final long startTime = System.nanoTime();
+                runTasks(() -> System.nanoTime() - startTime < timeoutPerTick);
+            }, 1);
+        }
         //Setting Blocks
         boolean genbiomes = options.shouldRegenBiomes();
         boolean hasBiome = options.hasBiomeType();
@@ -126,7 +151,21 @@ public abstract class Regenerator {
             });
         }
         target.setBlocks(region, pattern);
-        TaskManager.taskManager().cancel(taskId);
+        if (foliaTask != null) {
+            foliaTask.cancel();
+        } else {
+            TaskManager.taskManager().cancel(taskId);
+        }
+    }
+
+    /**
+     * Get the fresh world for Folia region scheduling.
+     * Subclasses should override this method to return the fresh world if available.
+     *
+     * @return the fresh world, or null if not available
+     */
+    protected @Nullable World getFreshWorld() {
+        return null;
     }
 
     private abstract class ChunkwisePattern implements Pattern {

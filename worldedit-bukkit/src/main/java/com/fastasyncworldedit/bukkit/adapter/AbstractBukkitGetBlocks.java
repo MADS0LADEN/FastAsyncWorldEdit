@@ -10,9 +10,13 @@ import com.fastasyncworldedit.core.queue.IChunkSet;
 import com.fastasyncworldedit.core.queue.IQueueExtent;
 import com.fastasyncworldedit.core.queue.implementation.QueueHandler;
 import com.fastasyncworldedit.core.queue.implementation.blocks.CharGetBlocks;
+import com.fastasyncworldedit.core.util.FoliaUtil;
 import com.fastasyncworldedit.core.util.MemUtil;
 import com.fastasyncworldedit.core.util.task.FaweThreadUtil;
+import com.sk89q.worldedit.bukkit.WorldEditPlugin;
 import com.sk89q.worldedit.extent.Extent;
+import org.bukkit.Bukkit;
+import org.bukkit.World;
 import com.sk89q.worldedit.internal.util.LogManagerCompat;
 import com.sk89q.worldedit.util.formatting.text.TextComponent;
 import org.apache.logging.log4j.Logger;
@@ -64,6 +68,11 @@ public abstract class AbstractBukkitGetBlocks<ServerLevel, LevelChunk> extends C
             LevelChunk nmsChunk,
             ServerLevel nmsWorld
     ) throws Exception;
+
+    /**
+     * The Bukkit world this chunk belongs to. Used to run the chunk apply on the owning region thread.
+     */
+    protected abstract World getBukkitWorld();
 
     @Override
     @SuppressWarnings({"rawtypes", "unchecked"})
@@ -132,13 +141,46 @@ public abstract class AbstractBukkitGetBlocks<ServerLevel, LevelChunk> extends C
             ServerLevel nmsWorld
     ) {
         try {
-            return internalCall(set, finalizer, copyKey, nmsChunk, nmsWorld);
+            return regionSafeInternalCall(set, finalizer, copyKey, nmsChunk, nmsWorld);
         } catch (Throwable e) {
             LOGGER.error("Error performing chunk call at chunk {},{}", chunkX, chunkZ, e);
             return null;
         } finally {
             forceLoadSections = true;
         }
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private <T extends Future<T>> T regionSafeInternalCall(
+            IChunkSet set,
+            Runnable finalizer,
+            int copyKey,
+            LevelChunk nmsChunk,
+            ServerLevel nmsWorld
+    ) throws Exception {
+        if (!FoliaUtil.isFoliaServer()) {
+            return internalCall(set, finalizer, copyKey, nmsChunk, nmsWorld);
+        }
+        final World bukkitWorld = getBukkitWorld();
+        if (bukkitWorld == null || Bukkit.isOwnedByCurrentRegion(bukkitWorld, chunkX, chunkZ)) {
+            return internalCall(set, finalizer, copyKey, nmsChunk, nmsWorld);
+        }
+        final CompletableFuture<Object> applied = new CompletableFuture<>();
+        Bukkit.getServer().getRegionScheduler().execute(
+                WorldEditPlugin.getInstance(),
+                bukkitWorld,
+                chunkX,
+                chunkZ,
+                () -> {
+                    try {
+                        applied.complete(internalCall(set, finalizer, copyKey, nmsChunk, nmsWorld));
+                    } catch (Throwable throwable) {
+                        LOGGER.error("Error performing chunk apply at {},{} on its region thread", chunkX, chunkZ, throwable);
+                        applied.completeExceptionally(throwable);
+                    }
+                }
+        );
+        return (T) (Future) applied;
     }
 
     protected <T extends Future<T>> T handleCallFinalizer(

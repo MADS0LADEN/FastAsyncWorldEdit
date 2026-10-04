@@ -19,8 +19,10 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.bukkit.util.FoliaTasks;
 import com.fastasyncworldedit.bukkit.util.MinecraftVersion;
 import com.fastasyncworldedit.bukkit.util.PaperSupport;
+import com.fastasyncworldedit.core.util.FoliaUtil;
 import com.fastasyncworldedit.core.configuration.Settings;
 import com.fastasyncworldedit.core.extent.processor.PlacementStateProcessor;
 import com.fastasyncworldedit.core.extent.processor.lighting.RelighterFactory;
@@ -135,6 +137,17 @@ public class BukkitServerInterface extends AbstractPlatform implements MultiUser
 
     @Override
     public int schedule(long delay, long period, Runnable task) {
+        if (FoliaUtil.isFoliaServer()) {
+            // Folia rejects a delay or period below 1. The effect queue asks for delay 0.
+            long initialDelay = Math.max(1L, delay);
+            long fixedPeriod = Math.max(1L, period);
+            return FoliaTasks.track(Bukkit.getGlobalRegionScheduler().runAtFixedRate(
+                    plugin,
+                    scheduledTask -> task.run(),
+                    initialDelay,
+                    fixedPeriod
+            ));
+        }
         return Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, task, delay, period);
     }
 

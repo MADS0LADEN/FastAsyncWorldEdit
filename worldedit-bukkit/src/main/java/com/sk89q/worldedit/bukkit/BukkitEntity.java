@@ -19,6 +19,8 @@
 
 package com.sk89q.worldedit.bukkit;
 
+import com.fastasyncworldedit.bukkit.util.PaperSupport;
+import com.fastasyncworldedit.core.util.FoliaUtil;
 import com.fastasyncworldedit.core.util.TaskManager;
 import com.sk89q.worldedit.bukkit.adapter.BukkitImplAdapter;
 import com.sk89q.worldedit.entity.BaseEntity;
@@ -28,10 +30,12 @@ import com.sk89q.worldedit.entity.metadata.EntityProperties;
 import com.sk89q.worldedit.extent.Extent;
 import com.sk89q.worldedit.util.Location;
 import com.sk89q.worldedit.world.NullWorld;
+import org.bukkit.Bukkit;
 import org.bukkit.entity.EntityType;
 
 import javax.annotation.Nullable;
 import java.lang.ref.WeakReference;
+import java.util.concurrent.CompletableFuture;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -84,6 +88,10 @@ public class BukkitEntity implements Entity {
     public boolean setLocation(Location location) {
         org.bukkit.entity.Entity entity = entityRef.get();
         if (entity != null) {
+            if (PaperSupport.isPaper()) {
+                entity.teleportAsync(BukkitAdapter.adapt(location));
+                return true;
+            }
             return entity.teleport(BukkitAdapter.adapt(location));
         } else {
             return false;
@@ -100,6 +108,16 @@ public class BukkitEntity implements Entity {
 
             BukkitImplAdapter adapter = WorldEditPlugin.getInstance().getBukkitImplAdapter();
             if (adapter != null) {
+                if (FoliaUtil.isFoliaServer()) {
+                    org.bukkit.Location location = entity.getLocation();
+                    CompletableFuture<BaseEntity> future = new CompletableFuture<>();
+                    Bukkit.getServer().getRegionScheduler().run(
+                            WorldEditPlugin.getInstance(),
+                            location,
+                            scheduledTask -> future.complete(adapter.getEntity(entity))
+                    );
+                    return future.join();
+                }
                 return adapter.getEntity(entity);
             } else {
                 return null;
@@ -111,6 +129,21 @@ public class BukkitEntity implements Entity {
 
     @Override
     public boolean remove() {
+        if (FoliaUtil.isFoliaServer()) {
+            return TaskManager.taskManager().syncWhenFree(() -> {
+                org.bukkit.entity.Entity entity = entityRef.get();
+                if (entity != null) {
+                    try {
+                        entity.getScheduler().execute(WorldEditPlugin.getInstance(), entity::remove, null, 1);
+                        return true;
+                    } catch (UnsupportedOperationException e) {
+                        return false;
+                    }
+                } else {
+                    return true;
+                }
+            });
+        }
         // synchronize the whole method, not just the remove operation as we always need to synchronize and
         // can make sure the entity reference was not invalidated in the few milliseconds between the next available tick (lol)
         return TaskManager.taskManager().sync(() -> {
